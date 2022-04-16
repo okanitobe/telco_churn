@@ -19,7 +19,7 @@ library(pROC)
 telco = read_excel("data/Telco_customer_churn.xlsx")
 ```
 
-## Dimension Reduction
+## Feature Selection
 ```{r}
 subdf = telco %>% 
   select(-c(CustomerID, Count, Country, State, City, `Zip Code`, 'Lat Long', Latitude, Longitude, 'Churn Reason', 'Churn Label', 'Churn Score', CLTV))
