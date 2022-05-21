@@ -1,78 +1,172 @@
 ---
-title: "Supervised Learning Project: Predicting Churn and Comparing Models"
-output: html_notebook
+title: "IBM Telco: Churn Prediction"
+author: "Bryan O."
+output: html_document
 ---
 
+## The Problem
+
+Via IBM: This sample data module tracks a fictional telco companys customer churn based on various factors.T he churn column indicates whether the customer departed within the last month. Other columns include gender, dependents, monthly charges, and many with information about the types of services each customer has.
+
+The purpose of this exercise is to build and evalue a couple classification models that predict churn at this telco company.
+
 ## Load libraries
+
 ```{r}
-library(readxl)
-library(tidyverse)
-library(rpart)
-library(caret)
-library(adabag)
-library(ggpubr)
-library(pROC)
+library(readxl) #to read excel file
+library(tidyverse) #to clean/visualize data
+library(ggpubr) #to arrange ggplots
+library(rpart) #for decision trees
+library(caret) #for model evaluation
+library(adabag) #for adaptive boosting
+library(pROC) #to plot ROC Curves
 ```
 
 ## Import Data
+
+First I read the data set into a data frame using the readxl library.
+
 ```{r}
 telco = read_excel("data/Telco_customer_churn.xlsx")
+head(telco)
 ```
 
-## Feature Selection
+Checking the head of the data frame, we can see that there are 33 columns (32 potential predictor variables, 1 target variable).
+
+## Variable description
+
+A brief description of the variables I am most interested in for this analysis:
+
+1.  Gender: Whether the customer is a male or a female
+
+2.  Senior Citizen: Whether the customer is a senior citizen or not (1, 0)
+
+3.  Partner: Whether the customer has a partner or not (Yes, No)
+
+4.  Dependents: Whether the customer has dependents or not (Yes, No)
+
+5.  Tenure Months: Number of months the customer has stayed with the company
+
+6.  Phone Service: Whether the customer has a phone service or not (Yes, No)
+
+7.  Multiple Lines: Whether the customer has multiple lines or not (Yes, No, No phone service)
+
+8.  Internet Service: Customer's internet service provider (DSL, Fiber optic, No)
+
+9.  Online Security: Whether the customer has online security or not (Yes, No, No internet service)
+
+10. Online Backup: Whether the customer has online backup or not (Yes, No, No internet service)
+
+11. Device Protection: Whether the customer has device protection or not (Yes, No, No internet service)
+
+12. Tech Support: Whether the customer has tech support or not (Yes, No, No internet service)
+
+13. Streaming TV: Whether the customer has streaming TV or not (Yes, No, No internet service)
+
+14. Streaming Movies: Whether the customer has streaming movies or not (Yes, No, No internet service)
+
+15. Contract: The contract term of the customer (Month-to-month, One year, Two year)
+
+16. Paperless Billing: Whether the customer has paperless billing or not (Yes, No)
+
+17. Payment Method: The customer's payment method (Electronic check, Mailed check, Bank transfer (automatic), Credit card (automatic))
+
+18. Monthly Charges: The amount charged to the customer monthly
+
+19. Total Charges: The total amount charged to the customer
+
+20. Churn Value: Whether the customer churned or not (Yes or No)
+
+Note: "Churn Value" is the target variable.
+
+## Dimension Reduction
+
+As alluded to above, I don't plan on using all 33 columns from the original dataset; some of the variables are either redundant or unnecessary for the analysis, so I will subset the telco data frame excluding those columns.
+
 ```{r}
 subdf = telco %>% 
   select(-c(CustomerID, Count, Country, State, City, `Zip Code`, 'Lat Long', Latitude, Longitude, 'Churn Reason', 'Churn Label', 'Churn Score', CLTV))
 ```
 
 ## Clean the subset dataframe
+
+I will also need to clean the data before analysis. This step includes renaming the columns and factoring the categorical variables.
+
 ```{r}
 colnames(subdf) = gsub(" ", "", colnames(subdf))
 
 subdf = as.data.frame(lapply(subdf, function(x){ifelse(x=="No phone service", "No", x)}))
 subdf = as.data.frame(lapply(subdf, function(x){ifelse(x=="No internet service", "No", x)}))
 
-columns = colnames(subdf)[-c(5,18,19)] #exclude the columns we don't want to factor
+columns = colnames(subdf)[-c(5,18,19)] #exclude the columns we dont want to factor
 subdf = subdf %>% mutate_at(columns, factor)
 ```
 
 ## Exploratory Data Analysis
-### Numeric Variables
+
+Before creating the model, I will perform some exploratory data visualization, to get some insights on the data, and see if there are any potential "risk factors", i.e. variables that show a blatant correlation to customer churn.
+
+### Target Variable
+
+Only 26.54% of customers in this sample departed the company in the last month; 73.46% stayed with the company. We will need this in establishing our model benchmarks.
+
 ```{r}
 churnpercent = prop.table(table(subdf$ChurnValue)) *100
 pie(churnpercent, labels = paste(round(churnpercent, 2), "%" ,sep = ""))
 ```
 
 ### Factored Variables
+
+Using ggarange, we can create a grid of visualizations for each of the categorical variables in the dataset.
+
 ```{r}
-ggarrange(ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Gender, position = 'fill')), 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(SeniorCitizen, position = 'fill')),
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Partner, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Dependents, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(PhoneService, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(MultipleLines, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(InternetService, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(OnlineSecurity, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(OnlineBackup, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(DeviceProtection, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(TechSupport, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(StreamingTV, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(StreamingMovies, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Contract, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(PaperlessBilling, position = 'fill')) , 
-          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(PaymentMethod, position = 'fill')), 
+#plotting the impact of categorical features on ChurnValue
+ggarrange(ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Gender, position = fill)), 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(SeniorCitizen, position = fill)),
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Partner, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Dependents, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(PhoneService, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(MultipleLines, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(InternetService, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(OnlineSecurity, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(OnlineBackup, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(DeviceProtection, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(TechSupport, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(StreamingTV, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(StreamingMovies, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(Contract, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(PaperlessBilling, position = fill)) , 
+          ggplot(data = subdf, aes(fill=ChurnValue)) +geom_bar(aes(PaymentMethod, position = fill)), 
           ncol = 4, nrow=4)
 ```
 
+### Continuous Variables
+
+Using ggarange again, we can create a grid for the visualizations of each continuous variable
+
+```{r}
+#plotting the impact of continuous features on ChurnValue
+ggarrange(ggplot(data = subdf, aes(fill=ChurnValue)) + geom_histogram(aes(TenureMonths, color="black"), bins = 16),
+          ggplot(data = subdf, aes(fill=ChurnValue)) + geom_histogram(aes(MonthlyCharges, color="black"), binwidth = 10),
+          ggplot(data = subdf, aes(fill=ChurnValue)) + geom_histogram(aes(TotalCharges, color="black")),
+          ncol = 3)
+```
 
 ## Establish Baseline Accuracy using the ZeroR Classifier
+
+I will use the ZeroR classifier to establish the benchmarks for the models. ZeroR is the simplest classifier which only predicts the majority class of the target variable. As we established earlier, the majority class is ChurnValue=0 (in other words, "customer did not churn". We are basically trying to see if the models that will build are more accurate than if we guessed the majority outcome every single time.
+
 ```{r}
 table(subdf$ChurnValue)
 prop.table(table(subdf$ChurnValue))[1]
 ```
-Baseline accuracy according to the ZeroR Classifier is 73.46%. In order for classifier to be useful, it needs to exceed this accuracy.
+
+Since the target variable is imbalanced, it is important to evaluate other statistics as well, such as sensitivity and specificity. The Sensitivity, Specificity, and Baseline Accuracy (Sensitivity + Specificity / 2) of the ZeroR classifier is 0%, 100%, and 50%, respectively. In order for our classification models to be useful, they need not only exceed our overall accuracy of 73.46%, but these statistics as well (although I doubt any of the models will achieve a Specificity of 100%).
 
 ## Split dataset into Training and Testing Splits
+
+I am going to split the model into two sets, training and testing, using a random seed sample and a 70:30 train-test ratio. I will train on one set, and evaluate on the test split.
+
 ```{r}
 set.seed(123)
 train = sample(1:nrow(subdf), nrow(subdf)*(.70))
@@ -81,29 +175,12 @@ trainSplit = subdf[train , ]
 testSplit = subdf[-train , ]
 ```
 
-## Logistic Regression
-### Fit the model
-```{r}
-fit.glm = glm(ChurnValue ~., data = trainSplit, family = "binomial")
-
-summary(fit.glm)
-```
-
-### Calculate Accuracy on TrainSplit
-```{r}
-glm.pred = ifelse(predict(fit.glm, trainSplit, type = "response") >= 0.5, 1, 0 )
-cm.glm = confusionMatrix(as.factor(glm.pred), trainSplit$ChurnValue, positive = "1"); cm.glm
-```
-
-### Calculate Accuracy on TestSplit
-```{r}
-glm.pred = ifelse(predict(fit.glm, testSplit, type = "response") >= 0.5, 1, 0 )
-cm.glm = confusionMatrix(as.factor(glm.pred), testSplit$ChurnValue, positive = "1"); cm.glm
-```
-
 ## Decision Tree
+
 ### Fit the model
+
 I will start off making a large tree and then prune it down, so I will use a low minsplit value of 2.
+
 ```{r}
 fit.tree = rpart(ChurnValue ~ ., 
             data = trainSplit, 
@@ -113,26 +190,82 @@ fit.tree = rpart(ChurnValue ~ .,
 ```
 
 ### Prune the large tree
+
 To prune the tree, I will look for the complexity parameter that results in the minimum cross-validation (from the cptable); then I will use that CP value to prune the tree.
+
 ```{r}
 bestcp = fit.tree$cptable[which.min(fit.tree$cptable[ , "xerror"]) , "CP"]; bestcp
 
 fit.prune = prune.rpart(fit.tree, cp=bestcp)
 ```
 
-### Calculate Accuracy on TrainSplit
+### Evaluate Accuracy on TrainSplit
+
 ```{r}
 tree.pred = predict(fit.prune, trainSplit, type = "class")
 cm.tree = confusionMatrix(tree.pred, trainSplit$ChurnValue, positive = "1"); cm.tree
 ```
 
-### Calculate Accuracy on TestSplit
+### Evaluate Accuracy on TestSplit
+
 ```{r}
 tree.pred = predict(fit.prune, testSplit, type = "class")
 cm.tree = confusionMatrix(tree.pred, testSplit$ChurnValue, positive = "1"); cm.tree
 ```
 
-## Plotting ROC Curves and Comparing AUC
+Based on these results, the decision tree appears to achieve a higher overall accuracy and balanced accuracy than our baseline ZeroR did.
+
+## Adaptive Boosting
+
+Given that decision trees oftentimes have very high variance, I want to see if using an ensemble method, such as Adaptive Boosting, will give us even more accurate, and more stable, prediction results.
+
+### Fit the model
+
+```{r}
+boost.fit = boosting(ChurnValue ~ ., data = trainSplit, mfinal = 100)
+```
+
+### Evaluate Accuracy on TrainSplit
+
+```{r}
+boost.pred = predict(boost.fit, trainSplit, type="class")
+
+confusionMatrix(as.factor(boost.pred$class), trainSplit$ChurnValue, positive = "1")
+```
+
+### Evaluate Accuracy on TestSplit
+
+```{r}
+boost.pred = predict(boost.fit, testSplit, type="class")
+
+cm.boost = confusionMatrix(as.factor(boost.pred$class), testSplit$ChurnValue, positive = "1"); cm.boost
+```
+
+Based on these results, adaptive boosting also appears to achieve a higher overall accuracy and balanced accuracy than our baseline ZeroR did. However, the results don't seem to be drastically different from that of the decision tree.
+
+## Comparing Methods
+
+### Comparison Matrix
+
+To summarize the results in an organized manner, I will create a table with the Accuracy, Sensitivity, Specificity, and Balanced Accuracy of all the classifiers (ZeroR, Decision Tree, and Adaptive Boosting).
+
+```{r}
+Baseline = c(0.7346, 0.0000, 1.0000, 0.5000)
+
+result <- cbind(rbind(cm.tree$overall["Accuracy"], cm.boost$overall["Accuracy"]),
+                rbind(cm.tree$byClass[c("Sensitivity", "Specificity", "Balanced Accuracy")],
+                      cm.boost$byClass[c("Sensitivity", "Specificity", "Balanced Accuracy")]))
+
+result = rbind(result,Baseline)
+
+row.names(result) <- c("Decision Tree", "Adaptive Boosting", "ZeroR")
+result
+```
+
+### Plotting ROC Curves and Comparing AUC
+
+We can also us the pROC library to plot the ROC curves for Adaptive Boosting and Decision Tree and compare the areas under each curve, to determine which is better classifier (this is essentially a graph of the balanced accuracies).
+
 ```{r}
 plot.roc(testSplit$ChurnValue, glm.pred, col="red", print.auc=TRUE, legacy.axes=TRUE)
 plot.roc(testSplit$ChurnValue, as.numeric(tree.pred), col="blue",print.auc=TRUE, print.auc.y=0.4, legacy.axes=TRUE, add=TRUE)
@@ -140,12 +273,11 @@ legend("bottomright", c("Logistic Regression", "Decision Tree"), col = c("red", 
 ```
 
 ## Conclusions
-1) The logistic regression, according to the AUC, is a better predictor than the Decision Tree.
 
-2) In comparing balanced accuracy, the logistic regression outperforms the baseline, but the decision tree classifier does not.
+In observing the comparison matrix and the ROC curves, we can conclude a few things:
 
-3) Both classifiers have fairly high negative predictive values, meaning that they are very good at predicting those who do not churn; however, both classifiers have weak positive predictive values, meaning that they aren't great at predicting those who do churn.
+1)  The decision tree model and the adaptive boosting model are both better at predicting customer churn than guessing negative churn for every outcome (better accuracy, better balanced accuracy, better predictive values, and obviously better at identifying positive cases of churn).
 
+2)  The decision tree and adaptive boosting models are also pretty good at identifying negative cases of churn (aka Specificity), although obviously not quite as good as if we literally guessed negative churn for every outcome.
 
-
-
+3)  The Adaptive Boosting model, according to the balanced accuracy / AUC, is just barely a better predictor than the Decision Tree, by the smallest of fractions.
